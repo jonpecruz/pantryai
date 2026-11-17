@@ -1,64 +1,17 @@
-const CACHE_NAME = "pantryai-v1";
-const APP_SHELL = [
-  "/",
-  "/pantry",
-  "/week",
-  "/shopping",
-  "/cook",
-  "/manifest.json",
-];
-
-self.addEventListener("install", (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL))
-  );
-  self.skipWaiting();
-});
-
-self.addEventListener("activate", (event) => {
-  event.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(
-        keys
-          .filter((key) => key !== CACHE_NAME)
-          .map((key) => caches.delete(key))
-      )
-    )
-  );
-  self.clients.claim();
-});
-
-// Strategy: network-first for navigation (HTML), cache-first for everything else.
-self.addEventListener("fetch", (event) => {
-  const { request } = event;
-
-  if (request.method !== "GET") return;
-
-  if (request.mode === "navigate") {
-    event.respondWith(
-      fetch(request)
-        .then((response) => {
-          const clone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
-          return response;
-        })
-        .catch(() => caches.match(request).then((res) => res || caches.match("/")))
-    );
-    return;
-  }
-
-  event.respondWith(
-    caches.match(request).then((cached) => {
-      if (cached) return cached;
-      return fetch(request)
-        .then((response) => {
-          if (response && response.status === 200 && response.type === "basic") {
-            const clone = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
-          }
-          return response;
-        })
-        .catch(() => cached);
-    })
-  );
+const CACHE_NAME = "pantryai-hosted-static-v1";
+self.addEventListener("install", () => self.skipWaiting());
+self.addEventListener("activate", event => event.waitUntil((async () => {
+  await Promise.all((await caches.keys()).filter(key => key.startsWith("pantryai") && key !== CACHE_NAME).map(key => caches.delete(key)));
+  await self.clients.claim();
+})()));
+self.addEventListener("fetch", event => {
+  const request = event.request, url = new URL(request.url);
+  if (request.method !== "GET" || url.origin !== self.location.origin || !(url.pathname.startsWith("/_next/static/") || url.pathname.startsWith("/icons/"))) return;
+  event.respondWith((async () => {
+    const cache = await caches.open(CACHE_NAME), cached = await cache.match(request);
+    if (cached) return cached;
+    const response = await fetch(request);
+    if (response.ok) await cache.put(request, response.clone());
+    return response;
+  })());
 });

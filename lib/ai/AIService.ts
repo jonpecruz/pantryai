@@ -1,14 +1,14 @@
 import type { ZodType } from "zod";
 import type { AIProviderAdapter, AIGenerateParams } from "./ProviderAdapter";
 import { AIProviderError } from "./ProviderAdapter";
-import { GeminiAdapter } from "./providers/geminiAdapter";
+import { PublikAdapter } from "./providers/publikAdapter";
 
 // -----------------------------------------------------------------------
 // Single entry point to the AI for the whole app.
 //
 // To switch providers in the future (Mistral, DeepSeek...): create a new
 // file in lib/ai/providers/ that implements AIProviderAdapter, and change
-// ONLY the `new GeminiAdapter()` line below. Nothing else in the app needs
+// ONLY the `new PublikAdapter()` line below. Nothing else in the app needs
 // to change: the /api/* routes keep calling aiService the same way.
 // -----------------------------------------------------------------------
 
@@ -57,4 +57,4 @@ export class AIService {
   }
 }
 
-export const aiService = new AIService(new GeminiAdapter());
+export const aiService = new AIService(new PublikAdapter());

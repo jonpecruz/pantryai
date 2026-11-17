@@ -5,9 +5,10 @@ const GEMINI_ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models
 
 export class GeminiAdapter implements AIProviderAdapter {
   readonly name = "gemini";
+  constructor(private readonly ownKey?: string) {}
 
   async generateJSON(params: AIGenerateParams): Promise<string> {
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey = this.ownKey ?? process.env.GEMINI_API_KEY;
     if (!apiKey) {
       throw new AIProviderError(
         "The GEMINI_API_KEY environment variable is missing on the server.",
@@ -66,9 +67,9 @@ export class GeminiAdapter implements AIProviderAdapter {
           this.name
         );
       }
-      const bodyText = await response.text().catch(() => "");
+
       throw new AIProviderError(
-        `Gemini responded with error ${response.status}: ${bodyText.slice(0, 300)}`,
+        `Gemini responded with error ${response.status}.`,
         this.name
       );
     }

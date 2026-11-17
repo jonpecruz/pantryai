@@ -38,7 +38,9 @@ export class AIProviderError extends Error {
   constructor(
     message: string,
     public readonly provider: string,
-    public readonly cause?: unknown
+    public readonly cause?: unknown,
+    public readonly status?: number,
+    public readonly topUpUrl?: string
   ) {
     super(message);
     this.name = "AIProviderError";

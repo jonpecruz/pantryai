@@ -1,9 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
-import BottomNav from "@/components/BottomNav";
-import ServiceWorkerRegister from "@/components/ServiceWorkerRegister";
-import AppInit from "@/components/AppInit";
-import SyncManager from "@/components/SyncManager";
+import { currentUser } from "@/lib/supabase/server";
 
 export const metadata: Metadata = {
   title: "PantryAI",
@@ -28,19 +25,16 @@ export const viewport: Viewport = {
   themeColor: "#F7F5F0",
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const user = await currentUser();
   return (
-    <html lang="en">
+    <html lang="en" data-user-id={user?.id ?? ""}>
       <body className="flex flex-col min-h-screen">
-        <ServiceWorkerRegister />
-        <AppInit />
-        <SyncManager />
-        <main className="flex-1 pb-28 pt-safe">{children}</main>
-        <BottomNav />
+        {children}
       </body>
     </html>
   );

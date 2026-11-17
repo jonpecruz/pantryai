@@ -1,3 +1,4 @@
+import { appAccess } from "@/lib/access.server";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { aiService } from "@/lib/ai/AIService";
@@ -18,6 +19,10 @@ const requestSchema = z.object({
 });
 
 export async function POST(req: NextRequest) {
+  if (req.headers.get("origin") !== req.nextUrl.origin) return NextResponse.json({ error: "Invalid origin." }, { status: 403 });
+  const { user, state } = await appAccess();
+  if (!user) return NextResponse.json({ error: "Sign in to PantryAI." }, { status: 401 });
+  if (state?.state !== "claimed") return NextResponse.json({ error: "Sign in with publik." }, { status: 403 });
   let body: z.infer<typeof requestSchema>;
   try {
     const json = await req.json();
@@ -69,8 +74,8 @@ export async function POST(req: NextRequest) {
     });
   } catch (err) {
     if (err instanceof AIProviderError) {
-      const status = err.message.includes("rate limit") ? 429 : 502;
-      return NextResponse.json({ error: err.message }, { status });
+      const status = err.status ?? (err.message.includes("rate limit") ? 429 : 502);
+      return NextResponse.json({ error: err.message, ...(err.topUpUrl ? { top_up_url: err.topUpUrl } : {}) }, { status });
     }
     return NextResponse.json(
       { error: "Unexpected error reading the receipt. Try another photo." },

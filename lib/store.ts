@@ -1,8 +1,8 @@
 "use client";
 
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
-import { supabase } from "@/lib/supabase/client";
+import { persist, createJSONStorage } from "zustand/middleware";
+
 import type {
   PantryItem,
   Location,
@@ -17,20 +17,7 @@ import { generateGroceryList } from "@/lib/groceryDiff";
 import { estimatePrice, computePricePerBaseUnit, resolvePriceForPurchase, toBaseUnit } from "@/lib/priceEstimates";
 import { normalizeProductName, isSameProduct } from "@/lib/productName";
 import { deductIngredientsFromPantry, type DeductionResult } from "@/lib/pantryDeduction";
-import { syncFullState, syncReceipt, syncPriceMemoryEntry, syncPantryItems } from "@/lib/supabase/sync";
-
-// -----------------------------------------------------------------------
-// Utility: tries to sync with Supabase but NEVER blocks the UI.
-// The app is "local-first": the local state (localStorage) always wins.
-// -----------------------------------------------------------------------
-async function trySync(fn: () => Promise<unknown>) {
-  try {
-    await fn();
-  } catch (err) {
-    // Offline, or Supabase not configured: we keep working locally without breaking anything.
-    console.warn("Supabase sync postponed (offline?)", err);
-  }
-}
+import { syncFullState } from "@/lib/supabase/sync";
 
 function uid() {
   return crypto.randomUUID();
@@ -142,19 +129,10 @@ export const useAppStore = create<AppState>()(
       setPeople: (people) => {
         const clamped = Math.max(1, Math.min(12, people));
         set({ people: clamped });
-        trySync(async () => {
-          await supabase.from("preferences").update({ people: clamped }).neq("id", "");
-        });
       },
       setWeeklyBudget: (weeklyBudget) => {
         const clamped = Math.max(10, Math.min(500, weeklyBudget));
         set({ weeklyBudget: clamped });
-        trySync(async () => {
-          await supabase
-            .from("preferences")
-            .update({ weekly_budget: clamped })
-            .neq("id", "");
-        });
       },
 
       // ---------- Nutrition goals ----------
@@ -170,17 +148,6 @@ export const useAppStore = create<AppState>()(
           fatG: goals.fatG ?? state.fatG,
         }));
         const next = get();
-        trySync(async () => {
-          await supabase
-            .from("nutrition_goals")
-            .update({
-              calories: next.calories,
-              protein_g: next.proteinG,
-              carbs_g: next.carbsG,
-              fat_g: next.fatG,
-            })
-            .neq("id", "");
-        });
       },
 
       // ---------- Pantry ----------
@@ -201,26 +168,6 @@ export const useAppStore = create<AppState>()(
           updated_at: now,
         };
         set((state) => ({ pantryItems: [newItem, ...state.pantryItems] }));
-        trySync(async () => {
-          const { error } = await supabase.from("pantry_items").insert({
-            id: newItem.id,
-            name: newItem.name,
-            category: newItem.category,
-            quantity: newItem.quantity,
-            unit: newItem.unit,
-            location: newItem.location,
-            purchase_date: newItem.purchase_date,
-            expiration_date: newItem.expiration_date,
-            is_empty: newItem.is_empty,
-          });
-          if (error) throw error;
-          await supabase.from("pantry_transactions").insert({
-            pantry_item_id: newItem.id,
-            type: "add",
-            quantity: newItem.quantity,
-            unit: newItem.unit,
-          });
-        });
       },
 
       consumePantryItem: (id, amount) => {
@@ -237,19 +184,6 @@ export const useAppStore = create<AppState>()(
           }),
         }));
         const item = get().pantryItems.find((it) => it.id === id);
-        trySync(async () => {
-          if (!item) return;
-          await supabase
-            .from("pantry_items")
-            .update({ quantity: item.quantity, is_empty: item.is_empty })
-            .eq("id", id);
-          await supabase.from("pantry_transactions").insert({
-            pantry_item_id: id,
-            type: "consume",
-            quantity: amount,
-            unit: item.unit,
-          });
-        });
       },
 
       useAllPantryItem: (id) => {
@@ -262,9 +196,6 @@ export const useAppStore = create<AppState>()(
         set((state) => ({
           pantryItems: state.pantryItems.filter((it) => it.id !== id),
         }));
-        trySync(async () => {
-          await supabase.from("pantry_items").delete().eq("id", id);
-        });
       },
 
       restockPantryItem: (id, amount) => {
@@ -281,19 +212,6 @@ export const useAppStore = create<AppState>()(
           ),
         }));
         const item = get().pantryItems.find((it) => it.id === id);
-        trySync(async () => {
-          if (!item) return;
-          await supabase
-            .from("pantry_items")
-            .update({ quantity: item.quantity, is_empty: false })
-            .eq("id", id);
-          await supabase.from("pantry_transactions").insert({
-            pantry_item_id: id,
-            type: "add",
-            quantity: amount,
-            unit: item.unit,
-          });
-        });
       },
 
       addPantryItemsFromReceipt: (payload) => {
@@ -331,69 +249,12 @@ export const useAppStore = create<AppState>()(
               purchaseDate: payload.purchaseDate ?? now.slice(0, 10),
             }))
         );
-
-        trySync(async () => {
-          const rows = newItems.map((it) => ({
-            id: it.id,
-            name: it.name,
-            category: it.category,
-            quantity: it.quantity,
-            unit: it.unit,
-            location: it.location,
-            purchase_date: it.purchase_date,
-            expiration_date: it.expiration_date,
-            is_empty: it.is_empty,
-          }));
-          const { error } = await supabase.from("pantry_items").insert(rows);
-          if (error) throw error;
-
-          await supabase.from("pantry_transactions").insert(
-            newItems.map((it) => ({
-              pantry_item_id: it.id,
-              type: "add",
-              quantity: it.quantity,
-              unit: it.unit,
-              note: "Added from receipt scan",
-            }))
-          );
-
-          const totalAmount = included.reduce((sum, i) => sum + i.price, 0);
-          await syncReceipt(
-            { storeName: payload.storeName, purchaseDate: payload.purchaseDate, totalAmount },
-            included.map((i, idx) => ({
-              name: i.name,
-              quantity: i.quantity,
-              unit: i.unit,
-              price: i.price,
-              pantryItemId: newItems[idx].id,
-            }))
-          );
-        });
       },
 
       consumeIngredientsForMeal: (ingredients) => {
         const { pantryItems } = get();
         const { items, results } = deductIngredientsFromPantry(pantryItems, ingredients);
         set({ pantryItems: items });
-
-        trySync(async () => {
-          // Only re-sync the products that actually changed.
-          const changedIds = new Set(
-            items
-              .filter((next) => {
-                const prev = pantryItems.find((p) => p.id === next.id);
-                return prev && prev.quantity !== next.quantity;
-              })
-              .map((it) => it.id)
-          );
-          for (const item of items) {
-            if (!changedIds.has(item.id)) continue;
-            await supabase
-              .from("pantry_items")
-              .update({ quantity: item.quantity, is_empty: item.is_empty })
-              .eq("id", item.id);
-          }
-        });
 
         return results;
       },
@@ -465,13 +326,6 @@ export const useAppStore = create<AppState>()(
 
           return { pantryItems };
         });
-
-        trySync(async () => {
-          // We sync the whole pantry: since quantities can get merged with
-          // existing products here, it's simpler and more reliable than
-          // manually reconstructing which rows changed.
-          await syncPantryItems(get().pantryItems);
-        });
       },
 
       // ---------- Personal price memory ----------
@@ -502,15 +356,6 @@ export const useAppStore = create<AppState>()(
             };
           }
           return { priceMemory: next };
-        });
-
-        trySync(async () => {
-          const { priceMemory } = get();
-          for (const entry of entries) {
-            const key = normalizeProductName(entry.name);
-            const memoryEntry = priceMemory[key];
-            if (memoryEntry) await syncPriceMemoryEntry(memoryEntry);
-          }
         });
       },
 
@@ -690,7 +535,12 @@ export const useAppStore = create<AppState>()(
       },
     }),
     {
-      name: "pantryai-storage",
+      name: "pantryai-hosted",
+      storage: createJSONStorage(() => ({
+        getItem: (name) => localStorage.getItem(`pantryai:${document.documentElement.dataset.userId}:${name}`),
+        setItem: (name, value) => localStorage.setItem(`pantryai:${document.documentElement.dataset.userId}:${name}`, value),
+        removeItem: (name) => localStorage.removeItem(`pantryai:${document.documentElement.dataset.userId}:${name}`),
+      })),
       partialize: (state) => ({
         people: state.people,
         weeklyBudget: state.weeklyBudget,
