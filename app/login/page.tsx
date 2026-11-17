@@ -1,5 +1,7 @@
 import { redirect } from "next/navigation";
 import { authClient, currentUser } from "@/lib/supabase/server";
+import { signUpErrorMessage } from "@/lib/auth-errors";
+import AuthButtons from "@/components/AuthButtons";
 
 export const dynamic = "force-dynamic";
 export default async function Login({ searchParams }: { searchParams: { message?: string } }) {
@@ -12,7 +14,10 @@ export default async function Login({ searchParams }: { searchParams: { message?
     const client = authClient();
     if (form.get("action") === "signup") {
       const { data, error } = await client.auth.signUp({ email, password });
-      if (error) redirect("/login?message=Could+not+create+your+account.+Please+try+again.");
+      if (error) {
+        console.warn("PantryAI sign-up failed", { code: error.code ?? "unknown", status: error.status });
+        redirect(`/login?message=${encodeURIComponent(signUpErrorMessage(error))}`);
+      }
       if (!data.session) redirect("/login?message=Check+your+email+to+confirm+your+account,+then+sign+in.");
     } else {
       const { error } = await client.auth.signInWithPassword({ email, password });
@@ -27,9 +32,9 @@ export default async function Login({ searchParams }: { searchParams: { message?
     {!configured ? <p>This deployment is being configured. Please check back soon.</p> : <form action={signIn} className="flex flex-col gap-4">
       <label>Email<input className="mt-1 w-full rounded-xl border bg-card p-3" name="email" type="email" autoComplete="email" required /></label>
       <label>Password<input className="mt-1 w-full rounded-xl border bg-card p-3" name="password" type="password" minLength={8} autoComplete="current-password" required /></label>
-      <button className="rounded-xl bg-primary p-3 text-primary-foreground" name="action" value="signin">Sign in</button>
-      <button className="rounded-xl border p-3" name="action" value="signup">Create account</button>
+      <AuthButtons />
     </form>}
     {searchParams.message && <p role="status">{searchParams.message}</p>}
   </main>;
 }
+
